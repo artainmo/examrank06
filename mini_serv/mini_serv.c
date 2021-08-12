@@ -26,7 +26,7 @@ typedef struct s_client
 void fatal(int id)
 {
 	write(2, "Fatal error\n", strlen("Fatal error\n"));
-	printf("%d\n", id);
+	//printf("%d\n", id);
 	(void)id;
 	exit(1);
 }
@@ -51,7 +51,7 @@ void send_to_all_clients(t_server *s, t_client *c, char *text, int fd)
 		{
 			if (send(c->fd, text, strlen(text), 0) == -1)
 				fatal(8);
-			printf("To %d: %s", c->id, text);
+			//printf("To %d: %s", c->id, text);
 		}
 		c = c->next;
 	}	
