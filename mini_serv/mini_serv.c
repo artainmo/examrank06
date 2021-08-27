@@ -205,7 +205,7 @@ int main(int argc, char **argv)
 {
 	t_server s;
 
-	if (argc == 1)
+	if (argc != 2)
 	{
 		write(2, "Wrong number of arguments\n", strlen("Wrong number of arguments\n"));
 		exit(1);
