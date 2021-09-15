@@ -1,6 +1,7 @@
 # examrank06
 
-### ADDITIONS TO FAVOR THE MOULINETTE | BASE CODE BLOCKS ON TEST 9
+### ADDITIONS TO FAVOR THE MOULINETTE 
+###### BASE CODE BLOCKS ON TEST 9
 * complete message at once -> WORSE
 * reorder ids after disconnections -> WORSE
 * "Warning our tester is expecting that you send the messages as fast as you can. Don't do un-necessary buffer.
