@@ -5,6 +5,7 @@
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <arpa/inet.h>
+#include <errno.h>
 
 typedef struct s_server
 {
@@ -14,32 +15,54 @@ typedef struct s_server
 	fd_set read_set;
 	fd_set write_set;
 	int max_fds;
+	int max_id;
 } t_server;
 
 typedef struct s_client
 {
 	int fd;
 	int id;
+	char *message_buffer;
 	struct s_client *next;
 } t_client;
 
 void fatal(int id)
 {
 	write(2, "Fatal error\n", strlen("Fatal error\n"));
-	//printf("%d\n", id);
+	//printf("%d : %s\n", id, strerror(errno));
 	(void)id;
 	exit(1);
 }
 
-int get_id(t_client *c, int fd)
+char *str_join(char *buf, char *add)
+{
+    char    *newbuf;
+    int     len;
+
+    if (buf == 0)
+        len = 0;
+    else
+        len = strlen(buf);
+    newbuf = malloc(sizeof(*newbuf) * (len + strlen(add) + 1));
+    if (newbuf == 0)
+        return (0);
+    newbuf[0] = 0;
+    if (buf != 0)
+        strcat(newbuf, buf);
+    free(buf);
+    strcat(newbuf, add);
+    return (newbuf);
+}
+
+t_client *get_client(t_client *c, int fd)
 {
 	while (c != 0)
 	{
 		if (c->fd == fd)
-			return (c->id);
+			return (c);
 		c = c->next;
 	}
-	write(2, "Error: get_id", strlen("Error: get_id"));
+	write(2, "Error: get_client", strlen("Error: get_client"));
 	exit(1);
 }
 
@@ -49,50 +72,44 @@ void send_to_all_clients(t_server *s, t_client *c, char *text, int fd)
 	{
 		if (c->fd != fd && FD_ISSET(c->fd, &s->write_set))
 		{
-			if (send(c->fd, text, strlen(text), 0) == -1)
-				fatal(8);
+			send(c->fd, text, strlen(text), MSG_DONTWAIT); //MSG_DONTWAIT enables nonblocking operation
 			//printf("To %d: %s", c->id, text);
 		}
 		c = c->next;
 	}	
 }
 
-t_client *client_disconnection(t_server *s, t_client *c, int connected_socket)
+t_client *client_disconnection(t_server *s, t_client *start, t_client *connected_socket)
 {
 	t_client *it;
 	t_client *prior;
 	char buffer[100];
 
-	it = c;
+	it = start;
 	prior = 0;
-	sprintf(buffer, "server: client %d just left\n", get_id(c, connected_socket));
-	send_to_all_clients(s, c, buffer, connected_socket);
+	sprintf(buffer, "server: client %d just left\n", connected_socket->id);
+	send_to_all_clients(s, start, buffer, connected_socket->fd);
 	while (it != 0)
 	{
-		if (it->fd == connected_socket)
+		if (it->fd == connected_socket->fd)
 		{
 			if (prior == 0)
-			{
-				c = c->next;
-				free(it);
-				break ;
-			}
+				start = start->next;
 			else
-			{
 				prior->next = prior->next->next;
-				free(it);
-				break ;
-			}
+			break ;
 		}
 		prior = it;
 		it = it->next;
 	}
-	FD_CLR(connected_socket, &s->sockets);
-	close(connected_socket);
-	return (c);
+	FD_CLR(connected_socket->fd, &s->sockets);
+	close(connected_socket->fd);
+	free(connected_socket->message_buffer);
+	free(connected_socket);
+	return (start);
 }
 
-t_client *client_message(t_server *s, t_client *c, int connected_socket)
+t_client *client_message(t_server *s, t_client *start, t_client *connected_socket)
 {
 	char message[1000000];
 	char line[1000000];
@@ -103,61 +120,73 @@ t_client *client_message(t_server *s, t_client *c, int connected_socket)
 
 	i = 0;
 	l = 0;
-	if ((len = recv(connected_socket, message, sizeof(message) - 1, 0)) <= 0)
-		c = client_disconnection(s, c, connected_socket);
+	if ((len = recv(connected_socket->fd, message, sizeof(message) - 1, MSG_DONTWAIT)) == 0) //MSG_DONTWAIT enables nonblocking operation
+		start = client_disconnection(s, start, connected_socket);
+	else if (len == -1)
+		return (start);
 	else
 	{
 		message[len] = 0;
 		while (message[i])
 		{
 			line[l] = message[i];
-			if (message[i] == '\n' || !message[i + 1])
+			if (message[i] == '\n')
 			{
 				line[l + 1] = 0;
-				sprintf(buffer, "client %d: %s", get_id(c, connected_socket), line);
-				send_to_all_clients(s, c, buffer, connected_socket);
+				if (connected_socket->message_buffer != 0)
+				{
+					sprintf(buffer, "client %d: %s%s", connected_socket->id, connected_socket->message_buffer, line);
+					free(connected_socket->message_buffer);
+					connected_socket->message_buffer = 0;
+				}
+				else
+					sprintf(buffer, "client %d: %s", connected_socket->id, line);
+				send_to_all_clients(s, start, buffer, connected_socket->fd);
 				l = -1;
 			}
 			l++;
 			i++;
 		}
+		if (message[i - 1] != '\n')
+		{
+			line[l] = 0;
+			if ((connected_socket->message_buffer = str_join(connected_socket->message_buffer, line)) == 0)
+				fatal(6);
+		}
 	}
-	return (c);
+	return (start);
 }
 
 t_client *client_connection(t_server *s, t_client *c)
 {
 	int new_connection;
 	char buffer[100];
+	t_client *new;
 	t_client *it;
 	socklen_t len;
 
 	it = c;
 	len = sizeof(s->server_address);
 	if ((new_connection = accept(s->server_socket, (struct sockaddr *)&s->server_address, &len)) == -1)
-		fatal(5);
+		return (c);
 	if (new_connection > s->max_fds)
 		s->max_fds = new_connection;
 	FD_SET(new_connection, &s->sockets);
+	if ((new = malloc(sizeof(t_client))) == 0) //sizeof(t_client *) created segfaults while sizeof(t_client) did not
+		fatal(5);
+	new->fd = new_connection;
+	new->id = s->max_id++;
+	new->next = 0;
+	new->message_buffer = 0;
 	if (c == 0)
-	{
-		if ((c = malloc(sizeof(t_client *))) == 0)
-			fatal(6);
-		c->fd = new_connection;
-		c->id = 0;
-		c->next = 0;
-	}
+		c = new;
 	else
 	{
 		while (it->next != 0)
 			it = it->next;
-		if ((it->next = malloc(sizeof(t_client *))) == 0)
-			fatal(7);
-		it->next->fd = new_connection;
-		it->next->id = it->id + 1;
-		it->next->next = 0;
+		it->next = new;
 	}
-	sprintf(buffer, "server: client %d just arrived\n", get_id(c, new_connection));
+	sprintf(buffer, "server: client %d just arrived\n", new->id);
 	send_to_all_clients(s, c, buffer, new_connection);
 	return (c);
 }
@@ -167,6 +196,7 @@ void launch_server(t_server s)
 	t_client *c;
 
 	c = 0;
+	s.max_id = 0;
 	s.max_fds = s.server_socket;
 	FD_ZERO(&s.sockets);
 	FD_SET(s.server_socket, &s.sockets);
@@ -183,7 +213,7 @@ void launch_server(t_server s)
 		for (int fd = 0; fd <= s.max_fds; fd++)
 		{
 			if (FD_ISSET(fd, &s.read_set))
-				c = client_message(&s, c, fd);
+				c = client_message(&s, c, get_client(c, fd));
 		}
 	}
 }
