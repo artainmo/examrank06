@@ -54,27 +54,12 @@ char *str_join(char *buf, char *add)
     return (newbuf);
 }
 
-t_client *get_client(t_client *c, int fd)
-{
-	while (c != 0)
-	{
-		if (c->fd == fd)
-			return (c);
-		c = c->next;
-	}
-	write(2, "Error: get_client", strlen("Error: get_client"));
-	exit(1);
-}
-
 void send_to_all_clients(t_server *s, t_client *c, char *text, int fd)
 {
 	while (c != 0)	
 	{
 		if (c->fd != fd && FD_ISSET(c->fd, &s->write_set))
-		{
 			send(c->fd, text, strlen(text), MSG_DONTWAIT); //MSG_DONTWAIT enables nonblocking operation
-			//printf("To %d: %s", c->id, text);
-		}
 		c = c->next;
 	}	
 }
@@ -194,6 +179,7 @@ t_client *client_connection(t_server *s, t_client *c)
 void launch_server(t_server s)
 {
 	t_client *c;
+	t_client *it;
 
 	c = 0;
 	s.max_id = 0;
@@ -203,6 +189,7 @@ void launch_server(t_server s)
 	while (1)
 	{
 		s.read_set = s.write_set = s.sockets;
+		it = c;
 		if (select(s.max_fds + 1, &s.read_set, &s.write_set, 0, 0) == -1)
 			fatal(4);
 		if (FD_ISSET(s.server_socket, &s.read_set))
@@ -210,10 +197,11 @@ void launch_server(t_server s)
 			c = client_connection(&s, c);
 			continue ;
 		}
-		for (int fd = 0; fd <= s.max_fds; fd++)
+		while (it)
 		{
-			if (FD_ISSET(fd, &s.read_set))
-				c = client_message(&s, c, get_client(c, fd));
+			if (FD_ISSET(it->fd, &s.read_set))
+				c = client_message(&s, c, it);
+			it = it->next;
 		}
 	}
 }
