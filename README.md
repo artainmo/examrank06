@@ -1,6 +1,6 @@
 # examrank06
 
-Sixth exam, write in C a web-server.
+42 school exam. Sixth exam, write in C a web-server with limited external libraries.
 
 ### Notes, trying to understand what is missing
 #### Negative additions
